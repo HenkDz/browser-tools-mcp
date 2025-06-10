@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import path from "path";
 import fs from "fs";
 import { z } from "zod";
+import { spawn, ChildProcess } from "child_process";
 
 // Create the MCP server
 const server = new McpServer({
@@ -16,6 +17,66 @@ const server = new McpServer({
 let discoveredHost = "127.0.0.1";
 let discoveredPort = 3025;
 let serverDiscovered = false;
+
+// ======== Connector auto-launch support ========
+let connectorProcess: ChildProcess | null = null;
+
+/**
+ * Ensures the browser-connector process is running. If it is already
+ * started (or a previous instance is still alive) the call is a no-op.
+ *
+ * On Windows/macOS/Linux it spawns: `node <repoRoot>/browser-tools-server/dist/browser-connector.js`
+ * in detached mode so that it will keep running independently of the MCP
+ * server STDIO transport handling.
+ */
+function ensureConnectorRunning() {
+  try {
+    if (connectorProcess && !connectorProcess.killed) {
+      return; // already running
+    }
+
+    // Resolve the connector script path relative to this file's compiled dir
+    // dist/mcp-server.js -> ../../browser-tools-server/dist/browser-connector.js
+    const connectorPath = path.resolve(
+      __dirname,
+      "..",
+      "..",
+      "browser-tools-server",
+      "dist",
+      "browser-connector.js"
+    );
+
+    if (!fs.existsSync(connectorPath)) {
+      console.error(
+        "Browser-tools connector script not found at:",
+        connectorPath
+      );
+      return;
+    }
+
+    console.error("Starting browser-tools connector at", connectorPath);
+    connectorProcess = spawn(process.execPath, [connectorPath], {
+      env: { ...process.env },
+      stdio: "ignore", // change to 'inherit' if you want logs in the same console
+      detached: true,
+    });
+
+    connectorProcess.unref();
+
+    // Make sure we clean up on exit
+    process.on("exit", () => {
+      if (connectorProcess && !connectorProcess.killed) {
+        try {
+          connectorProcess.kill();
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+  } catch (err) {
+    console.error("Failed to start browser-tools connector:", err);
+  }
+}
 
 // Function to get the default port from environment variable or default
 function getDefaultServerPort(): number {
@@ -58,6 +119,9 @@ function getDefaultServerHost(): string {
 // Server discovery function - similar to what you have in the Chrome extension
 async function discoverServer(): Promise<boolean> {
   console.log("Starting server discovery process");
+
+  // Try to ensure the connector is running before scanning
+  ensureConnectorRunning();
 
   // Common hosts to try
   const hosts = [getDefaultServerHost(), "127.0.0.1", "localhost"];
