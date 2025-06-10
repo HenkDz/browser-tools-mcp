@@ -40,7 +40,6 @@ function ensureConnectorRunning() {
     const connectorPath = path.resolve(
       __dirname,
       "..",
-      "..",
       "browser-tools-server",
       "dist",
       "browser-connector.js"
