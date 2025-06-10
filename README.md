@@ -12,6 +12,12 @@ Check out our project roadmap here: [Github Roadmap / Project Board](https://git
 
 ## Updates
 
+v1.3.0 is out! Highlights:
+
+- **Configurable screenshot save path** – the `takeScreenshot` MCP tool now accepts an optional `path` parameter so you can store PNGs anywhere (e.g. `await tools.takeScreenshot({ path: "F:/screens/home.png" })`).
+- **Works with DevTools closed** – a background WebSocket handler in the Chrome extension lets you capture screenshots even after you close or undock the BrowserTools panel.
+- Misc. merge-conflict clean-ups and stability improvements.
+
 v1.2.0 is out! Here's a quick breakdown of the update:
 - You can now enable "Allow Auto-Paste into Cursor" within the DevTools panel. Screenshots will be automatically pasted into Cursor (just make sure to focus/click into the Agent input field in Cursor, otherwise it won't work!)
 - Integrated a suite of SEO, performance, accessibility, and best practice analysis tools via Lighthouse
