@@ -480,8 +480,8 @@ function setupBackgroundWebSocket() {
 }
 
 function handleBackgroundScreenshot(message) {
-  // Step 1: find the real page tab (ignore devtools://, chrome://, etc.)
-  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+  // Fetch all tabs across all windows
+  chrome.tabs.query({}, (tabs) => {
     if (chrome.runtime.lastError) {
       bgWs.send(
         JSON.stringify({
@@ -493,7 +493,36 @@ function handleBackgroundScreenshot(message) {
       return;
     }
 
-    const targetTab = tabs.find((t) => /^(https?|file):\/\//.test(t.url));
+    // Helper: determine if a tab is a potential local dev server
+    const isLocalhost = (url) => {
+      try {
+        const { hostname } = new URL(url);
+        return (
+          hostname === "localhost" ||
+          hostname === "127.0.0.1" ||
+          hostname === "0.0.0.0" ||
+          hostname.endsWith(".localhost") ||
+          hostname.endsWith(".local")
+        );
+      } catch (_) {
+        return false;
+      }
+    };
+
+    // 1. Prefer any visible tab whose URL points to localhost / dev server
+    let targetTab = tabs.find((t) => t.active && isLocalhost(t.url || ""));
+
+    // 2. Otherwise, pick the first tab (any window) that is localhost-like
+    if (!targetTab) {
+      targetTab = tabs.find((t) => isLocalhost(t.url || ""));
+    }
+
+    // 3. Fallback: previously used strategy – active real web page in last focused window
+    if (!targetTab) {
+      targetTab = tabs.find(
+        (t) => t.active && /^(https?|file):\/\//.test(t.url || "")
+      );
+    }
 
     if (!targetTab) {
       bgWs.send(
@@ -506,31 +535,39 @@ function handleBackgroundScreenshot(message) {
       return;
     }
 
-    chrome.tabs.captureVisibleTab(
-      targetTab.windowId,
-      { format: "png" },
-      (dataUrl) => {
-        if (chrome.runtime.lastError) {
-          bgWs.send(
-            JSON.stringify({
-              type: "screenshot-error",
-              error: chrome.runtime.lastError.message,
-              requestId: message.requestId,
-            })
-          );
-          return;
-        }
+    // Ensure the window & tab are focused so captureVisibleTab grabs the correct content
+    chrome.windows.update(targetTab.windowId, { focused: true }, () => {
+      chrome.tabs.update(targetTab.id, { active: true }, () => {
+        // Small delay gives Chrome time to render the tab before capture
+        setTimeout(() => {
+          chrome.tabs.captureVisibleTab(
+            targetTab.windowId,
+            { format: "png" },
+            (dataUrl) => {
+              if (chrome.runtime.lastError) {
+                bgWs.send(
+                  JSON.stringify({
+                    type: "screenshot-error",
+                    error: chrome.runtime.lastError.message,
+                    requestId: message.requestId,
+                  })
+                );
+                return;
+              }
 
-        bgWs.send(
-          JSON.stringify({
-            type: "screenshot-data",
-            data: dataUrl,
-            requestId: message.requestId,
-            ...(message.path ? { path: message.path } : {}),
-          })
-        );
-      }
-    );
+              bgWs.send(
+                JSON.stringify({
+                  type: "screenshot-data",
+                  data: dataUrl,
+                  requestId: message.requestId,
+                  ...(message.path ? { path: message.path } : {}),
+                })
+              );
+            }
+          );
+        }, 400); // 400ms delay – tweak as necessary
+      });
+    });
   });
 }
 

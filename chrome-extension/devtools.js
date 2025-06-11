@@ -966,44 +966,81 @@ async function setupWebSocket() {
           // console.log("Chrome Extension: Received heartbeat response");
         } else if (message.type === "take-screenshot") {
           console.log("Chrome Extension: Taking screenshot...");
-          // Capture screenshot of the current tab
-          chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
-            if (chrome.runtime.lastError) {
-              console.error(
-                "Chrome Extension: Screenshot capture failed:",
-                chrome.runtime.lastError
-              );
-              ws.send(
-                JSON.stringify({
-                  type: "screenshot-error",
-                  error: chrome.runtime.lastError.message,
-                  requestId: message.requestId,
-                })
-              );
-              return;
-            }
 
-            console.log("Chrome Extension: Screenshot captured successfully");
-            // Just send the screenshot data, let the server handle paths
-            const response = {
-              type: "screenshot-data",
-              data: dataUrl,
-              requestId: message.requestId,
-              ...(message.path
-                ? { path: message.path }
-                : settings.screenshotPath
-                ? { path: settings.screenshotPath }
-                : {}),
-              autoPaste: settings.allowAutoPaste,
-            };
+          const inspectedTabId = chrome.devtools?.inspectedWindow?.tabId;
 
-            console.log("Chrome Extension: Sending screenshot data response", {
-              ...response,
-              data: "[base64 data]",
+          // Helper to capture screenshot after ensuring tab is active
+          const captureForTab = (tab) => {
+            chrome.windows.update(tab.windowId, { focused: true }, () => {
+              chrome.tabs.update(tab.id, { active: true }, () => {
+                setTimeout(() => {
+                  chrome.tabs.captureVisibleTab(
+                    tab.windowId,
+                    { format: "png" },
+                    (dataUrl) => {
+                      if (chrome.runtime.lastError) {
+                        console.error(
+                          "Chrome Extension: Screenshot capture failed:",
+                          chrome.runtime.lastError
+                        );
+                        ws.send(
+                          JSON.stringify({
+                            type: "screenshot-error",
+                            error: chrome.runtime.lastError.message,
+                            requestId: message.requestId,
+                          })
+                        );
+                        return;
+                      }
+
+                      console.log(
+                        "Chrome Extension: Screenshot captured successfully"
+                      );
+                      const response = {
+                        type: "screenshot-data",
+                        data: dataUrl,
+                        requestId: message.requestId,
+                        ...(message.path
+                          ? { path: message.path }
+                          : settings.screenshotPath
+                          ? { path: settings.screenshotPath }
+                          : {}),
+                        autoPaste: settings.allowAutoPaste,
+                      };
+
+                      console.log(
+                        "Chrome Extension: Sending screenshot data response",
+                        { ...response, data: "[base64 data]" }
+                      );
+
+                      ws.send(JSON.stringify(response));
+                    }
+                  );
+                }, 300); // give the browser a moment to render
+              });
             });
+          };
 
-            ws.send(JSON.stringify(response));
-          });
+          // Strategy:
+          // 1. If we have an inspected tab, prefer it
+          if (typeof inspectedTabId === "number") {
+            chrome.tabs.get(inspectedTabId, (inspectedTab) => {
+              if (!chrome.runtime.lastError && inspectedTab) {
+                captureForTab(inspectedTab);
+                return;
+              }
+
+              // Fallback: capture the currently active tab
+              chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                captureForTab(tabs[0]);
+              });
+            });
+          } else {
+            // No inspected tab (DevTools closed?) – capture active tab
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+              captureForTab(tabs[0]);
+            });
+          }
         } else if (message.type === "get-current-url") {
           console.log("Chrome Extension: Received request for current URL");
 
